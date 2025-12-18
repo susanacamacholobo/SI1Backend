@@ -9,100 +9,127 @@ use Exception;
 
 class GestionController extends Controller
 {
-    private $gestionModel;
-
-    public function __construct()
+    /**
+     * Listar todas las gestiones
+     */
+    public function index(): JsonResponse
     {
-        $this->gestionModel = new Gestion();
+        try {
+            $gestiones = Gestion::orderBy('anio', 'desc')
+                ->orderBy('periodo', 'desc')
+                ->get()
+                ->map(function ($gestion) {
+                    return [
+                        'idgestion' => $gestion->id,
+                        'anio' => $gestion->anio,
+                        'periodo' => $gestion->periodo,
+                        'fecha_inicio' => $gestion->fecha_inicio->format('Y-m-d'),
+                        'fecha_fin' => $gestion->fecha_fin->format('Y-m-d'),
+                        'nombre_completo' => $gestion->nombreCompleto,
+                    ];
+                });
+
+            return response()->json($gestiones);
+        } catch (Exception $e) {
+            return response()->json(['message' => 'Error al obtener gestiones: ' . $e->getMessage()], 500);
+        }
     }
 
-    // Crear gestión
+    /**
+     * Crear nueva gestión
+     */
     public function store(Request $request): JsonResponse
     {
         try {
-            $data = $request->all();
-            $required = ['anio','periodo','fechainicio','fechafin'];
-            
-            // Validar campos requeridos
-            foreach ($required as $f) {
-                if (!isset($data[$f]) || $data[$f] === '') {
-                    return response()->json(['message' => 'Faltan campos requeridos'], 400);
-                }
-            }
-            
-            $gestion = $this->gestionModel->create($data);
-            return response()->json($gestion);
-            
+            $request->validate([
+                'anio' => 'required|integer|min:2000|max:2100',
+                'periodo' => 'required|integer|min:1|max:2',
+                'fecha_inicio' => 'required|date',
+                'fecha_fin' => 'required|date|after:fecha_inicio',
+            ]);
+
+            $gestion = Gestion::create([
+                'anio' => $request->anio,
+                'periodo' => $request->periodo,
+                'fecha_inicio' => $request->fecha_inicio,
+                'fecha_fin' => $request->fecha_fin,
+            ]);
+
+            return response()->json([
+                'idgestion' => $gestion->id,
+                'anio' => $gestion->anio,
+                'periodo' => $gestion->periodo,
+                'fecha_inicio' => $gestion->fecha_inicio->format('Y-m-d'),
+                'fecha_fin' => $gestion->fecha_fin->format('Y-m-d'),
+                'nombre_completo' => $gestion->nombreCompleto,
+            ], 201);
         } catch (Exception $e) {
-            if (strpos($e->getMessage(), 'duplicate key') !== false || strpos($e->getMessage(), 'unique') !== false) {
-                return response()->json(['message' => 'Ya existe una gestión con estos datos'], 400);
-            }
             return response()->json(['message' => 'Error al crear gestión: ' . $e->getMessage()], 500);
         }
     }
 
-    // Listar gestiones
-    public function index(): JsonResponse
-    {
-        try {
-            $gestiones = $this->gestionModel->getAll();
-            return response()->json($gestiones);
-        } catch (Exception $e) {
-            return response()->json(['message' => 'Error al obtener la lista de gestiones: ' . $e->getMessage()], 500);
-        }
-    }
-
-    // Obtener gestión
+    /**
+     * Obtener gestión específica
+     */
     public function show($id): JsonResponse
     {
         try {
-            $gestion = $this->gestionModel->findById($id);
-            if (!$gestion) {
-                return response()->json(['message' => 'Gestión no encontrada'], 404);
-            }
-            return response()->json($gestion);
+            $gestion = Gestion::findOrFail($id);
+
+            return response()->json([
+                'idgestion' => $gestion->id,
+                'anio' => $gestion->anio,
+                'periodo' => $gestion->periodo,
+                'fecha_inicio' => $gestion->fecha_inicio->format('Y-m-d'),
+                'fecha_fin' => $gestion->fecha_fin->format('Y-m-d'),
+                'nombre_completo' => $gestion->nombreCompleto,
+            ]);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Error al obtener gestión: ' . $e->getMessage()], 500);
+            return response()->json(['message' => 'Gestión no encontrada'], 404);
         }
     }
 
-    // Actualizar gestión
+    /**
+     * Actualizar gestión
+     */
     public function update(Request $request, $id): JsonResponse
     {
         try {
-            $data = $request->all();
-            $required = ['anio','periodo','fechainicio','fechafin'];
-            foreach ($required as $f) {
-                if (!isset($data[$f]) || $data[$f] === '') {
-                    return response()->json(['message' => 'Faltan campos requeridos'], 400);
-                }
-            }
-            $this->gestionModel->update($id, $data);
-            $updated = $this->gestionModel->findById($id);
-            
-            if (!$updated) {
-                return response()->json(['message' => 'Gestión no encontrada'], 404);
-            }
-            
-            return response()->json($updated);
+            $gestion = Gestion::findOrFail($id);
+
+            $request->validate([
+                'anio' => 'sometimes|integer|min:2000|max:2100',
+                'periodo' => 'sometimes|integer|min:1|max:2',
+                'fecha_inicio' => 'sometimes|date',
+                'fecha_fin' => 'sometimes|date|after:fecha_inicio',
+            ]);
+
+            $gestion->update($request->only(['anio', 'periodo', 'fecha_inicio', 'fecha_fin']));
+
+            return response()->json([
+                'idgestion' => $gestion->id,
+                'anio' => $gestion->anio,
+                'periodo' => $gestion->periodo,
+                'fecha_inicio' => $gestion->fecha_inicio->format('Y-m-d'),
+                'fecha_fin' => $gestion->fecha_fin->format('Y-m-d'),
+                'nombre_completo' => $gestion->nombreCompleto,
+            ]);
         } catch (Exception $e) {
-            if (strpos($e->getMessage(), 'not found') !== false) {
-                return response()->json(['message' => 'Gestión no encontrada'], 404);
-            }
             return response()->json(['message' => 'Error al actualizar gestión: ' . $e->getMessage()], 500);
         }
     }
 
-    // Eliminar gestión
+    /**
+     * Eliminar gestión
+     */
     public function destroy($id): JsonResponse
     {
         try {
-            $this->gestionModel->delete($id);
+            $gestion = Gestion::findOrFail($id);
+            $gestion->delete();
+
             return response()->json(['message' => 'Gestión eliminada correctamente']);
         } catch (Exception $e) {
-            if (strpos($e->getMessage(), 'foreign key') !== false) {
-                return response()->json(['message' => 'No se puede eliminar la gestión porque tiene asignaciones asociadas'], 400);
-            }
             return response()->json(['message' => 'Error al eliminar gestión: ' . $e->getMessage()], 500);
         }
     }

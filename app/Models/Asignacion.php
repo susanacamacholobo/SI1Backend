@@ -2,104 +2,103 @@
 
 namespace App\Models;
 
-use App\Services\DatabaseService;
-use Exception;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class Asignacion
+class Asignacion extends Model
 {
-    private $db;
+    use HasFactory;
 
-    public function __construct()
+    protected $table = 'asignaciones';
+
+    protected $fillable = [
+        'docente_id',
+        'materia_id',
+        'grupo_id',
+        'gestion_id',
+    ];
+
+    /**
+     * Relationship: Asignacion belongs to Docente
+     */
+    public function docente(): BelongsTo
     {
-        $this->db = new DatabaseService();
+        return $this->belongsTo(Docente::class, 'docente_id');
     }
 
-    // Obtener todas las asignaciones con información de docente, materia, grupo y gestión lean bien
-    public function obtenerTodasAsignaciones()
+    /**
+     * Relationship: Asignacion belongs to Materia
+     */
+    public function materia(): BelongsTo
     {
-        try {
-            $sql = "SELECT 
-                        dgm.coddocente,
-                        dgm.idgrupo,
-                        dgm.idcarrera,
-                        dgm.sigla,
-                        dgm.idgestion,
-                        dgm.idinfraestructura,
-                        dgm.id,
-                        u.nombre AS nombre_docente,
-                        u.apellido AS apellido_docente,
-                        m.nombre AS nombre_materia,
-                        g.nombre AS nombre_grupo,
-                        ge.gestion AS nombre_gestion,
-                        c.nombre AS nombre_carrera
-                    FROM docentegrupomateria dgm
-                    LEFT JOIN docente d ON dgm.coddocente = d.coddocente
-                    LEFT JOIN usuario u ON d.userid = u.id
-                    LEFT JOIN materia m ON dgm.idcarrera = m.idcarrera AND dgm.sigla = m.sigla
-                    LEFT JOIN grupo g ON dgm.idgrupo = g.idgrupo
-                    LEFT JOIN gestion ge ON dgm.idgestion = ge.idgestion
-                    LEFT JOIN carrera c ON dgm.idcarrera = c.idcarrera
-                    ORDER BY dgm.idgestion DESC, dgm.idcarrera, dgm.sigla, dgm.idgrupo";
-            
-            $result = $this->db->query($sql, []);
-            return $this->db->fetchAll($result);
-        } catch (Exception $e) {
-            throw new Exception('Error al obtener asignaciones: ' . $e->getMessage());
-        }
+        return $this->belongsTo(Materia::class, 'materia_id');
     }
 
-    // Asignar un docente a una materia y grupo en una gestión
-    public function asignarDocenteMateria(array $data)
+    /**
+     * Relationship: Asignacion belongs to Grupo
+     */
+    public function grupo(): BelongsTo
     {
-        try {
-            // Validaciones mínimas
-            $required = ['coddocente','idgrupo','idcarrera','sigla','idgestion'];
-            foreach ($required as $f) {
-                if (!isset($data[$f])) {
-                    throw new Exception('Faltan datos requeridos');
-                }
-            }
+        return $this->belongsTo(Grupo::class, 'grupo_id');
+    }
 
-            // Asegurar que exista entrada en grupomateria
-            $sqlGrupoMat = "INSERT INTO grupomateria (idgrupo, idcarrera, sigla) VALUES ($1, $2, $3)
-                             ON CONFLICT (idgrupo, idcarrera, sigla) DO NOTHING";
-            $this->db->query($sqlGrupoMat, [ $data['idgrupo'], $data['idcarrera'], $data['sigla'] ]);
+    /**
+     * Relationship: Asignacion belongs to Gestion
+     */
+    public function gestion(): BelongsTo
+    {
+        return $this->belongsTo(Gestion::class, 'gestion_id');
+    }
 
-            // Insertar asignación en docentegrupomateria
-            $sqlAsign = "INSERT INTO docentegrupomateria (coddocente, idgrupo, idcarrera, sigla, idgestion, idinfraestructura, id)
-                          VALUES ($1, $2, $3, $4, $5, $6, $7)
-                          ON CONFLICT (coddocente, idgrupo, idcarrera, sigla, idgestion) DO NOTHING
-                          RETURNING coddocente, idgrupo, idcarrera, sigla, idgestion, idinfraestructura, id";
+    /**
+     * Relationship: Asignacion belongs to many Dias through pivot
+     */
+    public function dias()
+    {
+        return $this->belongsToMany(Dia::class, 'asignacion_horarios')
+            ->withPivot('horario_id')
+            ->withTimestamps();
+    }
 
-            $params = [
-                $data['coddocente'],
-                $data['idgrupo'],
-                $data['idcarrera'],
-                $data['sigla'],
-                $data['idgestion'],
-                $data['idinfraestructura'] ?? null,
-                $data['idhorario'] ?? null
-            ];
+    /**
+     * Relationship: Asignacion belongs to many Horarios through pivot
+     */
+    public function horarios()
+    {
+        return $this->belongsToMany(Horario::class, 'asignacion_horarios')
+            ->withPivot('dia_id')
+            ->withTimestamps();
+    }
 
-            $result = $this->db->query($sqlAsign, $params);
-            $row = $this->db->fetchOne($result);
+    /**
+     * Get all asignaciones with full information
+     */
+    public static function conTodo()
+    {
+        return static::with([
+            'docente.usuario',
+            'materia.carrera',
+            'grupo',
+            'gestion',
+            'dias',
+            'horarios'
+        ]);
+    }
 
-            // Si no hay RETURNING por conflicto, devolver los datos enviados
-            if (!$row) {
-                $row = [
-                    'coddocente' => (string)$data['coddocente'],
-                    'idgrupo' => (string)$data['idgrupo'],
-                    'idcarrera' => (string)$data['idcarrera'],
-                    'sigla' => $data['sigla'],
-                    'idgestion' => (string)$data['idgestion'],
-                    'idinfraestructura' => isset($data['idinfraestructura']) ? (string)$data['idinfraestructura'] : null,
-                    'id' => isset($data['idhorario']) ? (string)$data['idhorario'] : null
-                ];
-            }
+    /**
+     * Scope: Filter by gestion
+     */
+    public function scopePorGestion($query, $gestionId)
+    {
+        return $query->where('gestion_id', $gestionId);
+    }
 
-            return $row;
-        } catch (Exception $e) {
-            throw new Exception('Error al asignar docente a materia: ' . $e->getMessage());
-        }
+    /**
+     * Scope: Filter by docente
+     */
+    public function scopePorDocente($query, $docenteId)
+    {
+        return $query->where('docente_id', $docenteId);
     }
 }
