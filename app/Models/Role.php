@@ -2,122 +2,71 @@
 
 namespace App\Models;
 
-use App\Services\DatabaseService;
-use Exception;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
-class Role
+class Role extends Model
 {
-    private $db;
+    use HasFactory;
 
-    public function __construct()
+    protected $table = 'roles';
+
+    protected $fillable = [
+        'nombre',
+    ];
+
+    /**
+     * Relationship: Role has many Usuarios
+     */
+    public function usuarios(): HasMany
     {
-        $this->db = new DatabaseService();
+        return $this->hasMany(Usuario::class, 'rol_id');
     }
 
-    public function create(array $data)
+    /**
+     * Relationship: Role belongs to many Permisos
+     */
+    public function permisos(): BelongsToMany
     {
-        try {
-            $sql = "INSERT INTO roles (nombre) VALUES ($1) RETURNING idrol, nombre";
-            $params = [ $data['nombre'] ];
-            $result = $this->db->query($sql, $params);
-            return $this->db->fetchOne($result);
-        } catch (Exception $e) {
-            throw new Exception('Error al crear rol: ' . $e->getMessage());
-        }
+        return $this->belongsToMany(
+            Permiso::class,
+            'rol_permisos',
+            'rol_id',
+            'permiso_id'
+        )->withTimestamps();
     }
 
-    public function getAll()
+    /**
+     * Assign a permission to this role
+     */
+    public function assignPermission(int $permisoId): void
     {
-        $sql = "SELECT idrol, nombre FROM roles ORDER BY idrol";
-        $result = $this->db->query($sql);
-        return $this->db->fetchAll($result);
+        $this->permisos()->syncWithoutDetaching([$permisoId]);
     }
 
-    public function findById($id)
+    /**
+     * Remove a permission from this role
+     */
+    public function removePermission(int $permisoId): void
     {
-        $sql = "SELECT idrol, nombre FROM roles WHERE idrol = $1";
-        $result = $this->db->query($sql, [ $id ]);
-        return $this->db->fetchOne($result);
+        $this->permisos()->detach($permisoId);
     }
 
-    public function update($id, array $data)
+    /**
+     * Sync permissions (replace all permissions with new ones)
+     */
+    public function syncPermissions(array $permisoIds): void
     {
-        try {
-            $sql = "UPDATE roles SET nombre = $1 WHERE idrol = $2";
-            $this->db->query($sql, [ $data['nombre'], $id ]);
-            return true;
-        } catch (Exception $e) {
-            throw new Exception('Error al actualizar rol: ' . $e->getMessage());
-        }
+        $this->permisos()->sync($permisoIds);
     }
 
-    public function delete($id)
+    /**
+     * Check if role has a specific permission
+     */
+    public function hasPermission(string $permisoNombre): bool
     {
-        try {
-            $sql = "DELETE FROM roles WHERE idrol = $1";
-            $this->db->query($sql, [ $id ]);
-            return true;
-        } catch (Exception $e) {
-            throw new Exception('Error al eliminar rol: ' . $e->getMessage());
-        }
-    }
-
-    public function asignarPermiso($idRol, $idPermiso)
-    {
-        try {
-            $sql = "INSERT INTO rolpermisos (idrol, idpermiso) VALUES ($1, $2) 
-                    ON CONFLICT (idrol, idpermiso) DO NOTHING
-                    RETURNING idrol, idpermiso";
-            $result = $this->db->query($sql, [ $idRol, $idPermiso ]);
-            $row = $this->db->fetchOne($result);
-            
-            if (!$row) {
-                return ['idrol' => $idRol, 'idpermiso' => $idPermiso];
-            }
-            return $row;
-        } catch (Exception $e) {
-            throw new Exception('Error al asignar permiso al rol: ' . $e->getMessage());
-        }
-    }
-
-    public function removerPermiso($idRol, $idPermiso)
-    {
-        try {
-            $sql = "DELETE FROM rolpermisos WHERE idrol = $1 AND idpermiso = $2";
-            $this->db->query($sql, [ $idRol, $idPermiso ]);
-            return true;
-        } catch (Exception $e) {
-            throw new Exception('Error al remover permiso del rol: ' . $e->getMessage());
-        }
-    }
-
-    public function getPermisosByRol($idRol)
-    {
-        try {
-            $sql = "SELECT p.idpermiso, p.nombre 
-                    FROM permisos p
-                    INNER JOIN rolpermisos rp ON p.idpermiso = rp.idpermiso
-                    WHERE rp.idrol = $1
-                    ORDER BY p.nombre";
-            $result = $this->db->query($sql, [ $idRol ]);
-            return $this->db->fetchAll($result);
-        } catch (Exception $e) {
-            throw new Exception('Error al obtener permisos del rol: ' . $e->getMessage());
-        }
-    }
-
-    public function sincronizarPermisos($idRol, array $idsPermisos)
-    {
-        try {
-            $this->db->query("DELETE FROM rolpermisos WHERE idrol = $1", [ $idRol ]);
-            
-            foreach ($idsPermisos as $idPermiso) {
-                $this->asignarPermiso($idRol, $idPermiso);
-            }
-            
-            return true;
-        } catch (Exception $e) {
-            throw new Exception('Error al sincronizar permisos: ' . $e->getMessage());
-        }
+        return $this->permisos()->where('nombre', $permisoNombre)->exists();
     }
 }

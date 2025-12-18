@@ -3,259 +3,171 @@
 namespace App\Http\Controllers;
 
 use App\Models\Administrador;
-use App\Models\User;
-use App\Services\DatabaseService;
+use App\Models\Usuario;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Exception;
+use Illuminate\Support\Facades\DB;
 
 class AdministradorController extends Controller
 {
-    private $administradorModel;
-    private $userModel;
-    private $databaseService;
-    
-    public function __construct()
-    {
-        $this->administradorModel = new Administrador();
-        $this->userModel = new User();
-        $this->databaseService = new DatabaseService();
-    }
-    
-    /**
-     * Crear administrador completo (usuario + administrador)
-     */
-    public function store(Request $request): JsonResponse
-    {
-        try {
-            $data = $request->all();
-            
-            // Validar campos requeridos
-            $required = ['nombre', 'apellido', 'correo', 'ci', 'contrasena', 'fecha_contrato'];
-            foreach ($required as $field) {
-                if (!isset($data[$field]) || empty($data[$field])) {
-                    return response()->json(['message' => "El campo {$field} es requerido"], 400);
-                }
-            }
-            
-            // Validar formato de email
-            if (!filter_var($data['correo'], FILTER_VALIDATE_EMAIL)) {
-                return response()->json(['message' => 'El formato del email no es válido'], 400);
-            }
-            
-            // Validar longitud de contraseña
-            if (strlen($data['contrasena']) < 6) {
-                return response()->json(['message' => 'La contraseña debe tener al menos 6 caracteres'], 400);
-            }
-            
-            // Validar formato de fecha de contrato
-            $fechaContrato = $data['fecha_contrato'] ?? $data['fechacontrato'] ?? null;
-            if ($fechaContrato && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaContrato)) {
-                return response()->json(['message' => 'La fecha de contrato no tiene un formato válido (YYYY-MM-DD)'], 400);
-            }
-            
-            // Validar email único
-            if ($this->userModel->existsByEmail($data['correo'])) {
-                return response()->json(['message' => 'Ya existe una cuenta registrada con este email'], 400);
-            }
-            
-            // Validar CI único
-            if ($this->userModel->existsByCI($data['ci'])) {
-                return response()->json(['message' => 'Ya existe un usuario registrado con esta cédula de identidad'], 400);
-            }
-            
-            // Preparar datos
-            $userData = [
-                'nombre' => $data['nombre'],
-                'apellido' => $data['apellido'],
-                'correo' => $data['correo'],
-                'ci' => $data['ci'],
-                'contrasena' => $data['contrasena'],
-                'telefono' => $data['telefono'] ?? null,
-                'sexo' => $data['sexo'] ?? null,
-                'direccion' => $data['direccion'] ?? null
-            ];
-            
-            $adminData = [
-                'fecha_contrato' => $fechaContrato ?: date('Y-m-d')
-            ];
-            
-            // Crear administrador
-            $result = $this->administradorModel->create($userData, $adminData);
-            
-            return response()->json($result);
-            
-        } catch (Exception $e) {
-            if (strpos($e->getMessage(), 'duplicate key') !== false) {
-                return response()->json(['message' => 'Ya existe un administrador con estos datos. Verifique email y cédula'], 400);
-            }
-            return response()->json(['message' => 'Error al crear administrador: ' . $e->getMessage()], 500);
-        }
-    }
-    
     /**
      * Obtener todos los administradores
      */
     public function index(): JsonResponse
     {
         try {
-            $administradores = $this->administradorModel->getAll();
-            
+            $administradores = Administrador::with('usuario.role')->get()->map(function ($admin) {
+                return [
+                    'codadministrador' => $admin->id,
+                    'userid' => $admin->usuario->id,
+                    'nombre' => $admin->usuario->nombre,
+                    'apellido' => $admin->usuario->apellido,
+                    'correo' => $admin->usuario->correo,
+                    'ci' => $admin->usuario->ci,
+                    'telefono' => $admin->usuario->telefono,
+                    'sexo' => $admin->usuario->sexo,
+                    'direccion' => $admin->usuario->direccion,
+                    'activo' => $admin->usuario->activo,
+                    'idrol' => $admin->usuario->rol_id,
+                    'rol' => $admin->usuario->role->nombre,
+                    'fecha_contrato' => $admin->fecha_contrato->format('Y-m-d'),
+                ];
+            });
+
             return response()->json($administradores);
-            
         } catch (Exception $e) {
-            return response()->json(['message' => 'Error al obtener la lista de administradores: ' . $e->getMessage()], 500);
+            return response()->json(['message' => 'Error al obtener administradores: ' . $e->getMessage()], 500);
         }
     }
-    
+
+    /**
+     * Crear nuevo administrador
+     */
+    public function store(Request $request): JsonResponse
+    {
+        try {
+            DB::beginTransaction();
+
+            // Validar datos
+            $request->validate([
+                'nombre' => 'required|string',
+                'apellido' => 'required|string',
+                'correo' => 'required|email|unique:usuarios,correo',
+                'ci' => 'required|string|unique:usuarios,ci',
+                'contrasena' => 'required|string|min:6',
+                'fecha_contrato' => 'required|date',
+            ]);
+
+            // Crear usuario con rol administrador (2)
+            $usuario = Usuario::create([
+                'rol_id' => 2, // Administrador
+                'contrasena' => $request->contrasena,
+                'nombre' => $request->nombre,
+                'apellido' => $request->apellido,
+                'telefono' => $request->telefono,
+                'sexo' => $request->sexo,
+                'correo' => $request->correo,
+                'ci' => $request->ci,
+                'direccion' => $request->direccion,
+                'activo' => true,
+            ]);
+
+            // Crear administrador
+            $administrador = Administrador::create([
+                'usuario_id' => $usuario->id,
+                'fecha_contrato' => $request->fecha_contrato,
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'user_id' => $usuario->id,
+                'cod_administrador' => $administrador->id,
+            ], 201);
+        } catch (Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Error al crear administrador: ' . $e->getMessage()], 500);
+        }
+    }
+
     /**
      * Obtener administrador específico
      */
     public function show($id): JsonResponse
     {
         try {
-            $administrador = $this->administradorModel->findById($id);
-            
-            if (!$administrador) {
-                return response()->json(['message' => 'Administrador no encontrado'], 404);
-            }
-            
-            return response()->json($administrador);
-            
+            $admin = Administrador::with('usuario.role')->findOrFail($id);
+
+            return response()->json([
+                'codadministrador' => $admin->id,
+                'userid' => $admin->usuario->id,
+                'nombre' => $admin->usuario->nombre,
+                'apellido' => $admin->usuario->apellido,
+                'correo' => $admin->usuario->correo,
+                'ci' => $admin->usuario->ci,
+                'telefono' => $admin->usuario->telefono,
+                'sexo' => $admin->usuario->sexo,
+                'direccion' => $admin->usuario->direccion,
+                'activo' => $admin->usuario->activo,
+                'idrol' => $admin->usuario->rol_id,
+                'rol' => $admin->usuario->role->nombre,
+                'fecha_contrato' => $admin->fecha_contrato->format('Y-m-d'),
+            ]);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Error al obtener administrador: ' . $e->getMessage()], 500);
+            return response()->json(['message' => 'Administrador no encontrado'], 404);
         }
     }
-    
+
     /**
      * Actualizar administrador
      */
     public function update(Request $request, $id): JsonResponse
     {
         try {
-            $data = $request->all();
-            
-            // Validar campos requeridos
-            $required = ['nombre', 'apellido'];
-            foreach ($required as $field) {
-                if (!isset($data[$field]) || empty($data[$field])) {
-                    return response()->json(['message' => "El campo {$field} es requerido"], 400);
-                }
-            }
-            
-            // Validar formato de email si se está actualizando
-            if (isset($data['correo']) && !filter_var($data['correo'], FILTER_VALIDATE_EMAIL)) {
-                return response()->json(['message' => 'El formato del email no es válido'], 400);
-            }
-            
-            // Validar formato de fecha de contrato
-            $fechaContrato = $data['fecha_contrato'] ?? $data['fechacontrato'] ?? null;
-            if ($fechaContrato && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaContrato)) {
-                return response()->json(['message' => 'La fecha de contrato no tiene un formato válido (YYYY-MM-DD)'], 400);
-            }
-            
-            // Validar unicidad de email si se está actualizando
-            if (isset($data['correo'])) {
-                $existingUser = $this->databaseService->query(
-                    "SELECT id FROM users WHERE email = ? AND id != ?",
-                    [$data['correo'], $id]
-                );
-                if ($existingUser) {
-                    return response()->json(['message' => 'Ya existe otro usuario con este email'], 400);
-                }
-            }
-            
-            // Validar unicidad de CI si se está actualizando
-            if (isset($data['ci'])) {
-                $existingUser = $this->databaseService->query(
-                    "SELECT id FROM users WHERE ci = ? AND id != ?",
-                    [$data['ci'], $id]
-                );
-                if ($existingUser) {
-                    return response()->json(['message' => 'Ya existe otro usuario con esta cédula de identidad'], 400);
-                }
-            }
-            
-            // Preparar datos
-            $userData = [
-                'nombre' => $data['nombre'],
-                'apellido' => $data['apellido'],
-                'telefono' => $data['telefono'] ?? null,
-                'sexo' => $data['sexo'] ?? null,
-                'direccion' => $data['direccion'] ?? null,
-                'activo' => $data['activo'] ?? true
-            ];
-            
-            // Agregar correo y CI solo si se proporcionan
-            if (isset($data['correo'])) {
-                $userData['correo'] = $data['correo'];
-            }
-            if (isset($data['ci'])) {
-                $userData['ci'] = $data['ci'];
-            }
-            
-            // Aceptar tanto fecha_contrato como fechacontrato
-            $adminData = [
-                'fecha_contrato' => $fechaContrato ?: date('Y-m-d')
-            ];
-            
+            DB::beginTransaction();
+
+            $admin = Administrador::with('usuario')->findOrFail($id);
+
+            // Actualizar usuario
+            $admin->usuario->update([
+                'nombre' => $request->nombre ?? $admin->usuario->nombre,
+                'apellido' => $request->apellido ?? $admin->usuario->apellido,
+                'telefono' => $request->telefono,
+                'sexo' => $request->sexo,
+                'direccion' => $request->direccion,
+                'activo' => $request->activo ?? true,
+            ]);
+
             // Actualizar administrador
-            $this->administradorModel->update($id, $userData, $adminData);
-            
-            // Obtener el administrador actualizado
-            $updated = $this->administradorModel->findById($id);
-            
-            if (!$updated) {
-                return response()->json(['message' => 'Administrador no encontrado después de la actualización'], 404);
-            }
-            
-            return response()->json($updated);
-            
+            $admin->update([
+                'fecha_contrato' => $request->fecha_contrato ?? $admin->fecha_contrato,
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Administrador actualizado correctamente',
+            ]);
         } catch (Exception $e) {
-            if (strpos($e->getMessage(), 'not found') !== false || strpos($e->getMessage(), 'No data found') !== false) {
-                return response()->json(['message' => 'Administrador no encontrado'], 404);
-            }
-            if (strpos($e->getMessage(), 'duplicate key') !== false) {
-                return response()->json(['message' => 'Ya existe un administrador con estos datos. Verifique email y cédula'], 400);
-            }
+            DB::rollBack();
             return response()->json(['message' => 'Error al actualizar administrador: ' . $e->getMessage()], 500);
         }
     }
-    
+
     /**
      * Eliminar administrador (desactivar)
      */
     public function destroy($id): JsonResponse
     {
         try {
-            // Verificar si el administrador existe
-            $administrador = $this->administradorModel->findById($id);
-            if (!$administrador) {
-                return response()->json(['message' => 'Administrador no encontrado'], 404);
-            }
-            
-            // Verificar que no sea el último administrador activo
-            $activeAdmins = $this->databaseService->query(
-                "SELECT COUNT(*) as count FROM administradors a JOIN users u ON a.user_id = u.id WHERE u.activo = true AND u.id != ?",
-                [$id]
-            );
-            
-            if ($activeAdmins && $activeAdmins['count'] <= 1) {
-                return response()->json([
-                    'message' => 'No se puede eliminar el administrador porque debe haber al menos un administrador activo en el sistema'
-                ], 400);
-            }
-            
-            $this->administradorModel->delete($id);
-            return response()->json(['message' => 'Administrador eliminado correctamente']);
-            
+            $admin = Administrador::with('usuario')->findOrFail($id);
+
+            // Desactivar usuario en lugar de eliminar
+            $admin->usuario->update(['activo' => false]);
+
+            return response()->json(['message' => 'Administrador desactivado correctamente']);
         } catch (Exception $e) {
-            if (strpos($e->getMessage(), 'not found') !== false || strpos($e->getMessage(), 'No data found') !== false) {
-                return response()->json(['message' => 'Administrador no encontrado'], 404);
-            }
-            if (strpos($e->getMessage(), 'foreign key') !== false || strpos($e->getMessage(), 'constraint') !== false) {
-                return response()->json(['message' => 'No se puede eliminar el administrador porque está siendo referenciado por otros registros'], 400);
-            }
             return response()->json(['message' => 'Error al eliminar administrador: ' . $e->getMessage()], 500);
         }
     }
